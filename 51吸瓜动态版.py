@@ -1,71 +1,3 @@
-# =================== 智能万能 CDN 加速块（2025-12-08 按实测排序） ===================
-import requests, time, threading, queue
-from functools import lru_cache
-
-sess = requests.Session()
-adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=50)
-sess.mount('http://', adapter)
-sess.mount('https://', adapter)
-
-# 1. 按你最新测速结果排序（DNS 0 ms，下载均值由低到高）
-CDN_POOL = ['lib.baomitu.com', 'open.oppomobile.com', 'cdn.staticaly.com']
-
-# 2. 死链替换表（保持最新可用节点）
-DEAD_MAP = {
-    'open.oppomobile.com': CDN_POOL[0],   # 最优后备
-    'img.gejiba.com':    CDN_POOL[0],
-    'cdn.staticaly.com': CDN_POOL[0],
-    'lib.baomitu.com':   CDN_POOL[0]
-}
-
-# 3. 并发测速（返回 ms，失败 9999）
-def _ping(host):
-    try:
-        t0 = time.perf_counter()
-        sess.head(f'https://{host}/favicon.ico', timeout=0.8)
-        return int((time.perf_counter() - t0) * 1000)
-    except:
-        return 9999
-
-# 4. 启动时自动排序（只跑一次）
-def _rank_cdn():
-    q = queue.Queue()
-    for h in CDN_POOL:
-        threading.Thread(target=lambda h: q.put((_ping(h), h)), args=(h,), daemon=True).start()
-    ranked = sorted([q.get() for _ in CDN_POOL])
-    return [h for _, h in ranked if _ < 9999] or CDN_POOL
-FASTEST_CDN = _rank_cdn()
-print('[CDN] 自动测速完成，最优顺序：', FASTEST_CDN)
-
-# 5. 智能选路 + 缓存（lru_cache 线程安全）
-@lru_cache(maxsize=256)
-def auto_cdn_url(url: str, follow_redirect: bool = False, proxy_base: str = None):
-    if not url:
-        return ''
-    # 5.1 先替换死链
-    for dead, fast in DEAD_MAP.items():
-        url = url.replace(dead, fast)
-    # 5.2 轮询最优 CDN
-    host = url.split('/')[2]
-    for cdn in FASTEST_CDN:
-        if cdn == host:
-            continue
-        test = url.replace(host, cdn)
-        try:
-            r = sess.head(test, allow_redirects=False, timeout=2)
-            if r.status_code == 200:
-                url = test
-                break
-        except:
-            continue
-    # 5.3 302 追踪（播放链需要）
-    if follow_redirect:
-        url = sess.get(url, stream=True, timeout=5).url
-    # 5.4 代理前缀（可选）
-    if proxy_base and not url.startswith(proxy_base):
-        url = f'{proxy_base}{requests.utils.quote(url)}'
-    return url
-# =================== 智能CDN块结束 ===================
 import json
 import random
 import re
@@ -472,139 +404,112 @@ class Spider(Spider):
         except Exception as e:
             print(f"{str(e)}")
             return pq(data.encode('utf-8'))
-def _cover_fallback(self, pic_url):
-    """
-    极速无探测双 CDN（2025-06 白名单）
-    1. 优先 open.oppomobile.com（173 ms）→ images.weserv.nl（264 ms）→ i2.wp.com（443 ms）
-    2. 主域名与原始相同则回退次速节点
-    3. 支持代理前缀（可选）
-    """
-    import urllib.parse
-    try:
-        raw = (super()._cover_fallback(pic_url) if hasattr(super(), '_cover_fallback') else pic_url) or ''
+
+    # ================= 万能一键加速（2025-12 三节点版） =================
+    import re, json, requests, urllib.parse
+
+    def _cover_fallback(self, pic_url: str) -> str:
+        """
+        封面图加速：仅保留 2025-12 实测最快 3 节点
+        """
+        raw = pic_url or ''
         if not raw:
             return ''
-    except Exception:
-        raw = pic_url or ''
+        cdn_pool = ['lib.baomitu.com', 'images.weserv.nl', 'open.oppomobile.com']
+        host = raw.split('/')[2]
+        if host in cdn_pool:
+            idx = cdn_pool.index(host)
+            url = raw.replace(host, cdn_pool[(idx + 1) % len(cdn_pool)])
+        else:
+            url = raw.replace(host, cdn_pool[0])
+        if getattr(self, 'proxy_base', None):
+            url = f'{self.proxy_base}{urllib.parse.quote(url)}'
+        return url
 
-    # 白名单 CDN 按速度顺序（ms：173 → 264 → 443）
-    fast_pool = [
-        'open.oppomobile.com',            # WordPress Photon 最快
-        'images.weserv.nl',     # weserv 全球反代
-        'i2.wp.com'   # 大陆 OPPO CDN
-    ]
-
-    # 默认用最快节点；若已是最快则顺次下跳
-    for cdn in fast_pool:
-        candidate = raw.replace('rimg.iomycdn.com', cdn).replace('rimg.xiakee.com', cdn)
-        if candidate != raw:          # 替换成功即跳出
-            url = candidate
-            break
-    else:                             # 已全部是白名单，用次速回退
-        url = raw.replace('open.oppomobile.com', 'images.weserv.nl') \
-                 .replace('images.weserv.nl', 'i2.wp.com')
-
-    # 可选代理前缀
-    if getattr(self, 'proxy_base', None):
-        url = f'{self.proxy_base}{urllib.parse.quote(url)}'
-    return url
-
-
-# ==============  万能一键加速（2025-12 最新测速版）  ==============
-def _cover_fallback(self, pic_url: str) -> str:
-    """
-    2025-12 综合实测速度（AvgDownloadMs 升序）
-    1. lib.baomitu.com        41
-    2. images.weserv.nl       35→217
-    3. open.oppomobile.com    346
-    4. i2.wp.com              541
-    5. i3.wp.com              556
-    6. i0.wp.com              556
-    7. i1.wp.com              564
-    8. raw.githubusercontent.com 兜底
-    """
-    import urllib.parse
-    raw = (super()._cover_fallback(pic_url) if hasattr(super(), '_cover_fallback') else pic_url) or ''
-    if not raw: return ''
-
-    cdn_pool = [
-        'lib.baomitu.com',
-        'images.weserv.nl',
-        'open.oppomobile.com',
-        'i2.wp.com',
-        'i3.wp.com',
-        'i0.wp.com',
-        'i1.wp.com',
-        'raw.githubusercontent.com'
-    ]
-
-    host = raw.split('/')[2]
-    if host in cdn_pool:
-        idx = cdn_pool.index(host)
-        url = raw.replace(host, cdn_pool[(idx + 1) % len(cdn_pool)])
-    else:
-        url = raw.replace(host, cdn_pool[0])
-
-    if getattr(self, 'proxy_base', None):
-        url = f'{self.proxy_base}{urllib.parse.quote(url)}'
-    return url
-
-
-def _real_play_url(self, play_page_html: str) -> str:
-    """
-    万能起播加速（视频直链版）
-    1. 正则/JSON 抠直链
-    2. 废域名 → 白名单CDN（按最新测速顺序）
-    3. HEAD限2次302跟随
-    4. 支持代理前缀
-    """
-    import json, re, requests
-
-    url = ''
-    m = re.search(r'var\s+player_\w+\s*=\s*{"url":"([^"]+)"', play_page_html)
-    if m:
-        url = m.group(1).replace('\\', '')
-    else:
-        m = re.search(r'<iframe[^>]*\ssrc=["\']([^"\']+)["\']', play_page_html)
+    def _real_play_url(self, play_page_html: str) -> str:
+        """
+        播放直链加速：抠链 → 三节点替换 → 最多 2 次 302
+        """
+        url = ''
+        m = re.search(r'var\s+player_\w+\s*=\s*{"url":"([^"]+)"', play_page_html)
         if m:
-            url = m.group(1)
+            url = m.group(1).replace('\\', '')
+        else:
+            m = re.search(r'<iframe[^>]*\ssrc=["\']([^"\']+)["\']', play_page_html)
+            if m:
+                url = m.group(1)
 
-    if url.startswith('//'):
-        url = 'https:' + url
-    elif url.startswith('/') and not url.startswith('http'):
-        url = self.host.rstrip('/') + url
+        if url.startswith('//'):
+            url = 'https:' + url
+        elif url.startswith('/') and not url.startswith('http'):
+            url = self.host.rstrip('/') + url
 
-    # 废域名 → 按最新测速顺序替换
-    dead_hosts = ['rimg.iomycdn.com', 'rimg.xiakee.com', 'play.abcyun.com', 'video.xyzcdn.com']
-    cdn_fast = [
-        'lib.baomitu.com',
-        'images.weserv.nl',
-        'open.oppomobile.com',
-        'i2.wp.com',
-        'i3.wp.com',
-        'i0.wp.com',
-        'i1.wp.com',
-        'raw.githubusercontent.com'
-    ]
-    for dead in dead_hosts:
-        url = url.replace(dead, cdn_fast[0])          # 先换最快
+        # 废域名 → 三节点
+        dead_hosts = ['rimg.iomycdn.com', 'rimg.xiakee.com', 'play.abcyun.com', 'video.xyzcdn.com']
+        cdn_fast = ['lib.baomitu.com', 'images.weserv.nl', 'open.oppomobile.com']
+        for dead in dead_hosts:
+            url = url.replace(dead, cdn_fast[0])
+        host = url.split('/')[2]
+        if host in cdn_fast:
+            idx = cdn_fast.index(host)
+            url = url.replace(host, cdn_fast[(idx + 1) % len(cdn_fast)])
 
-    host = url.split('/')[2]
-    if host in cdn_fast:
-        idx = cdn_fast.index(host)
-        url = url.replace(host, cdn_fast[(idx + 1) % len(cdn_fast)])
-
-    # 最多跟2次302
-    for _ in range(2):
-        try:
-            r = requests.head(url, allow_redirects=False, timeout=3)
-            if r.status_code in {301, 302, 303, 307, 308}:
-                url = r.headers.get('Location', url)
-            else:
+        # 最多 2 次 302
+        for _ in range(2):
+            try:
+                r = requests.head(url, allow_redirects=False, timeout=3)
+                if r.status_code in {301, 302, 303, 307, 308}:
+                    url = r.headers.get('Location', url)
+                else:
+                    break
+            except Exception:
                 break
-        except Exception:
-            break
 
-    if getattr(self, 'proxy_base', None):
-        url = f'{self.proxy_base}{urllib.parse.quote(url)}'
-    return url
+        if getattr(self, 'proxy_base', None):
+            url = f'{self.proxy_base}{urllib.parse.quote(url)}'
+        return url
+
+    def _page_all(self, doc) -> int:
+        """
+        分类页无限翻页：原站只有 1 页也返回 9999
+        """
+        page_elements = doc.xpath('//div[@class="mypage"]//a')
+        if page_elements:
+            try:
+                last_page = page_elements[-2].xpath('./text()')[0]
+                if last_page.isdigit():
+                    return int(last_page)
+            except:
+                pass
+        return 9999
+
+    # ===== Monkey Patch =====
+    Spider._cover_fallback = _cover_fallback
+    Spider._real_play_url  = _real_play_url
+    Spider._page_all       = _page_all
+
+    _origin_categoryContent = Spider.categoryContent
+    def _categoryContent_new(self, tid, pg, filter, extend):
+        try:
+            domain, type_id = tid.split('_')
+            url = f"https://{domain}/index.php/vod/type/id/{type_id}.html"
+            if pg and pg != '1':
+                url = url.replace('.html', f'/page/{pg}.html')
+            self.log(f"访问分类URL: {url}")
+            rsp = self.fetch(url, headers=self.headers)
+            doc = self.html(rsp.text)
+            videos = self._get_videos(doc, limit=20)
+            pagecount = self._page_all(doc)
+            return {
+                'list': videos,
+                'page': int(pg),
+                'pagecount': pagecount,
+                'limit': 20,
+                'total': pagecount * 20
+            }
+        except Exception as e:
+            self.log(f"分类内容获取出错: {str(e)}")
+            return {'list': []}
+
+    Spider.categoryContent = _categoryContent_new
+    # ================= 追加结束 =================
