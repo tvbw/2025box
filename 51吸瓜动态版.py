@@ -95,22 +95,72 @@ class Spider(Spider):
 
             pg = int(pg)
             tid = tid.rstrip('/')
-            url = f"{self.host}{tid}/{pg}/" if pg > 1 else f"{self.host}{tid}/"
+            
+            # 构建URL - 根据分类类型处理不同格式
+            if tid == '/':
+                # 首页特殊处理
+                url = f"{self.host}/page/{pg}/" if pg > 1 else self.host
+            elif '/search/' in tid:
+                # 搜索结果页
+                search_key = tid.replace('/search/', '').strip('/')
+                url = f"{self.host}/search/{search_key}/{pg}/" if pg > 1 else f"{self.host}/search/{search_key}/"
+            else:
+                # 普通分类页
+                url = f"{self.host}{tid}/page/{pg}/" if pg > 1 else f"{self.host}{tid}/"
 
+            self.log(f"分类请求: {url}")
+            print(f"分类请求: {url}")
+            
             rsp = requests.get(url, headers=self.headers, proxies=self.proxies, timeout=15)
             if rsp.status_code != 200:
                 return {'list': [], 'page': pg, 'pagecount': pg, 'limit': 90, 'total': 0}
 
             doc = self.getpq(rsp.text)
-            videos = self.getlist(doc('#archive article a, #index article a'), tid)
+            videos = self.getlist(doc('#archive article a, #index article a, .post-list article a, .posts article a, .video-list article a'), tid)
 
-            # 统一判断是否有“下一页”链接
-            next_url = None
-            for selector in ['a.next', '.pagination a.next', '.pagenavi .next', 'a:contains("下一页")']:
-                next_url = doc(selector).attr('href')
-                if next_url:
+            # 多种方式检测是否有下一页
+            has_next = False
+            next_selectors = [
+                'a.next', 
+                '.pagination a.next', 
+                '.pagenavi .next', 
+                '.page-nav .next',
+                '.nav-links .next',
+                'a:contains("下一页")',
+                'a:contains("Next")',
+                'a:contains("next")'
+            ]
+            
+            # 方法1: 检查下一页按钮
+            for selector in next_selectors:
+                next_element = doc(selector)
+                if next_element.length > 0 and 'disabled' not in (next_element.attr('class') or ''):
+                    has_next = True
                     break
-            has_next = bool(next_url)
+            
+            # 方法2: 检查当前页码并寻找更大的页码
+            if not has_next:
+                current_page_links = doc('.pagination a.current, .page-numbers.current, .current')
+                if current_page_links.length > 0:
+                    try:
+                        current_page = int(current_page_links.text())
+                        # 查找大于当前页码的链接
+                        all_page_links = doc('.pagination a, .page-numbers')
+                        for link in all_page_links.items():
+                            try:
+                                page_num = int(link.text())
+                                if page_num > current_page:
+                                    has_next = True
+                                    break
+                            except:
+                                continue
+                    except:
+                        pass
+            
+            # 方法3: 检查是否有更多文章
+            if not has_next and videos:
+                # 如果当前页有视频且数量达到预期（通常每页20-30个），假设可能有下一页
+                has_next = len(videos) >= 20
 
             return {
                 'list': videos,
@@ -195,13 +245,8 @@ class Spider(Spider):
 
     def searchContent(self, key, quick, pg="1"):
         try:
-            url = f"{self.host}/search/{key}/{pg}" if pg != "1" else f"{self.host}/search/{key}/"
-            response = requests.get(url, headers=self.headers, proxies=self.proxies, timeout=15)
-            if response.status_code != 200:
-                return {'list': [], 'page': pg}
-            data = self.getpq(response.text)
-            videos = self.getlist(data('#archive article a, #index article a'))
-            return {'list': videos, 'page': pg}
+            # 直接调用categoryContent处理搜索，统一翻页逻辑
+            return self.categoryContent(f"/search/{key}", pg, {}, {})
         except Exception as e:
             print(f"searchContent error: {e}")
             return {'list': [], 'page': pg}
