@@ -8,14 +8,12 @@ sess.mount('http://', adapter)
 sess.mount('https://', adapter)
 
 # 1. 按你最新测速结果排序（DNS 0 ms，下载均值由低到高）
-CDN_POOL = ['lib.baomitu.com', 'open.oppomobile.com', 'cdn.staticaly.com']
+CDN_POOL = ['lib.baomitu.com', 'open.oppomobile.com']
 
 # 2. 死链替换表（保持最新可用节点）
 DEAD_MAP = {
-    'open.oppomobile.com': CDN_POOL[0],   # 最优后备
-    'img.gejiba.com':    CDN_POOL[0],
-    'cdn.staticaly.com': CDN_POOL[0],
-    'lib.baomitu.com':   CDN_POOL[0]
+    'lib.baomitu.com':   CDN_POOL[0],
+    'open.oppomobile.com': CDN_POOL[0]
 }
 
 # 3. 并发测速（返回 ms，失败 9999）
