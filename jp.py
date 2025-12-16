@@ -31,7 +31,7 @@ class Spider(Spider):
         '''
         if extend:
             hosts=json.loads(extend)['site']
-        # hosts = "https://www.tjrongze.com,https://www.jiabaide.cn,https://cqzuoer.com"
+        hosts = "https://www.tjrongze.com,https://www.jiabaide.cn,https://cqzuoer.com"
         self.host = self.host_late(hosts)
         pass
 
@@ -152,8 +152,10 @@ class Spider(Spider):
             'Referer': f'{self.host}/'
         }
         ids=id.split('@@')
-        pdata=self.fetch(f"{self.host}/api/mw-movie/anonymous/v1/video/episode/url?id={ids[0]}&nid={ids[1]}",headers=self.getheaders({'id':ids[0],'nid':ids[1]})).json()
-        return {'parse':0,'url':pdata['data']['playUrl'],'header':self.header}
+        pdata = self.fetch(f"{self.host}/api/mw-movie/anonymous/v2/video/episode/url?clientType=1&id={ids[0]}&nid={ids[1]}",headers=self.getheaders({'clientType':'1','id': ids[0], 'nid': ids[1]})).json()
+        vlist=[]
+        for i in pdata['data']['list']:vlist.extend([i['resolutionName'],i['url']])
+        return {'parse':0,'url':vlist,'header':self.header}
 
     def localProxy(self, param):
         pass
