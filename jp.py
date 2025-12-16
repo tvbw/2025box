@@ -1,10 +1,9 @@
-# coding=utf-8
-# !/usr/bin/python
+# -*- coding: utf-8 -*-
+# by @嗷呜
 import json
 import sys
 import threading
 import uuid
-from pprint import pprint
 import requests
 sys.path.append('..')
 from base.spider import Spider
@@ -12,83 +11,25 @@ import time
 from Crypto.Hash import MD5, SHA1
 
 class Spider(Spider):
-
-    def _cover_fallback(self, pic_url: str) -> str:
-        """封面图：三节点轮询"""
-        raw = pic_url or ''
-        if not raw:
-            return ''
-        cdn_pool = ['lib.baomitu.com', 'open.oppomobile.com', 'cdn.staticaly.com']
-        host = raw.split('/')[2]
-        if host in cdn_pool:
-            idx = cdn_pool.index(host)
-            url = raw.replace(host, cdn_pool[(idx + 1) % len(cdn_pool)])
-        else:
-            url = raw.replace(host, cdn_pool[0])
-        if getattr(self, 'proxy_base', None):
-            url = f'{self.proxy_base}{urllib.parse.quote(url)}'
-        return url
-
-    def _real_play_url(self, play_page_html: str) -> str:
-        """播放直链：三节点+302跟随"""
-        import re, requests, urllib.parse
-
-        url = ''
-        m = re.search(r'var\s+player_\w+\s*=\s*{"url":"([^"]+)"', play_page_html)
-        if m:
-            url = m.group(1).replace('\\', '')
-        else:
-            m = re.search(r'<iframe[^>]*\ssrc=["\']([^"\']+)["\']', play_page_html)
-            if m:
-                url = m.group(1)
-
-        if url.startswith('//'):
-            url = 'https:' + url
-        elif url.startswith('/') and not url.startswith('http'):
-            url = self.host.rstrip('/') + url
-
-        dead_hosts = ['rimg.iomycdn.com', 'rimg.xiakee.com', 'play.abcyun.com', 'video.xyzcdn.com']
-        cdn_fast = ['lib.baomitu.com', 'images.weserv.nl', 'open.oppomobile.com']
-        for dead in dead_hosts:
-            url = url.replace(dead, cdn_fast[0])
-        host = url.split('/')[2]
-        if host in cdn_fast:
-            idx = cdn_fast.index(host)
-            url = url.replace(host, cdn_fast[(idx + 1) % len(cdn_fast)])
-
-        for _ in range(2):
-            try:
-                r = requests.head(url, allow_redirects=False, timeout=3)
-                if r.status_code in {301, 302, 303, 307, 308}:
-                    url = r.headers.get('Location', url)
-                else:
-                    break
-            except Exception:
-                break
-
-        if getattr(self, 'proxy_base', None):
-            url = f'{self.proxy_base}{urllib.parse.quote(url)}'
-        return url
-
+    '''
+    配置示例：
+    {
+        "key": "xxxx",
+        "name": "xxxx",
+        "type": 3,
+        "api": ".所在路径/金牌.py",
+        "searchable": 1,
+        "quickSearch": 1,
+        "filterable": 1,
+        "changeable": 1,
+        "ext": {
+            "site": "https://www.jiabaide.cn,域名2,域名3"
+        }
+    },
+    '''
     def init(self, extend=""):
-        '''
-        {
-            "key": "",
-            "name": "",
-            "type": 3,
-            "api": "",
-            "searchable": 1,
-            "quickSearch": 1,
-            "filterable": 1,
-            "ext": {
-                "site": "https://www.tjrongze.com,https://www.jiabaide.cn,https://cqzuoer.com"
-            }
-        },
-        fm写法
-        '''
         if extend:
             hosts=json.loads(extend)['site']
-        # hosts = "https://www.tjrongze.com,https://www.jiabaide.cn,https://cqzuoer.com"
         self.host = self.host_late(hosts)
         pass
 
@@ -180,7 +121,7 @@ class Spider(Spider):
     def detailContent(self, ids):
         data=self.fetch(f"{self.host}/api/mw-movie/anonymous/video/detail?id={ids[0]}",headers=self.getheaders({'id':ids[0]})).json()
         vod=self.getvod([data['data']])[0]
-        vod['vod_play_from']='嗷呜有金牌'
+        vod['vod_play_from']='毒盒影视'
         vod['vod_play_url'] = '#'.join(
             f"{i['name'] if len(vod['episodelist']) > 1 else vod['vod_name']}${ids[0]}@@{i['nid']}" for i in
             vod['episodelist'])
@@ -209,8 +150,10 @@ class Spider(Spider):
             'Referer': f'{self.host}/'
         }
         ids=id.split('@@')
-        pdata=self.fetch(f"{self.host}/api/mw-movie/anonymous/v1/video/episode/url?id={ids[0]}&nid={ids[1]}",headers=self.getheaders({'id':ids[0],'nid':ids[1]})).json()
-        return {'parse':0,'url':pdata['data']['playUrl'],'header':self.header}
+        pdata = self.fetch(f"{self.host}/api/mw-movie/anonymous/v2/video/episode/url?clientType=1&id={ids[0]}&nid={ids[1]}",headers=self.getheaders({'clientType':'1','id': ids[0], 'nid': ids[1]})).json()
+        vlist=[]
+        for i in pdata['data']['list']:vlist.extend([i['resolutionName'],i['url']])
+        return {'parse':0,'url':vlist,'header':self.header}
 
     def localProxy(self, param):
         pass
@@ -279,4 +222,3 @@ class Spider(Spider):
 
     def getvod(self, array):
         return [{self.convert_field_name(k): v for k, v in item.items()} for item in array]
-
