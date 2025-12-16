@@ -1,9 +1,10 @@
-# -*- coding: utf-8 -*-
-# by @嗷呜
+# coding=utf-8
+# !/usr/bin/python
 import json
 import sys
 import threading
 import uuid
+from pprint import pprint
 import requests
 sys.path.append('..')
 from base.spider import Spider
@@ -11,25 +12,26 @@ import time
 from Crypto.Hash import MD5, SHA1
 
 class Spider(Spider):
-    '''
-    配置示例：
-    {
-        "key": "xxxx",
-        "name": "xxxx",
-        "type": 3,
-        "api": ".所在路径/金牌.py",
-        "searchable": 1,
-        "quickSearch": 1,
-        "filterable": 1,
-        "changeable": 1,
-        "ext": {
-            "site": "https://www.jiabaide.cn,域名2,域名3"
-        }
-    },
-    '''
+
     def init(self, extend=""):
+        '''
+        {
+            "key": "",
+            "name": "",
+            "type": 3,
+            "api": "",
+            "searchable": 1,
+            "quickSearch": 1,
+            "filterable": 1,
+            "ext": {
+                "site": "https://www.tjrongze.com,https://www.jiabaide.cn,https://cqzuoer.com"
+            }
+        },
+        fm写法
+        '''
         if extend:
             hosts=json.loads(extend)['site']
+        # hosts = "https://www.tjrongze.com,https://www.jiabaide.cn,https://cqzuoer.com"
         self.host = self.host_late(hosts)
         pass
 
@@ -121,7 +123,7 @@ class Spider(Spider):
     def detailContent(self, ids):
         data=self.fetch(f"{self.host}/api/mw-movie/anonymous/video/detail?id={ids[0]}",headers=self.getheaders({'id':ids[0]})).json()
         vod=self.getvod([data['data']])[0]
-        vod['vod_play_from']='毒盒影视'
+        vod['vod_play_from']='嗷呜有金牌'
         vod['vod_play_url'] = '#'.join(
             f"{i['name'] if len(vod['episodelist']) > 1 else vod['vod_name']}${ids[0]}@@{i['nid']}" for i in
             vod['episodelist'])
@@ -150,10 +152,8 @@ class Spider(Spider):
             'Referer': f'{self.host}/'
         }
         ids=id.split('@@')
-        pdata = self.fetch(f"{self.host}/api/mw-movie/anonymous/v2/video/episode/url?clientType=1&id={ids[0]}&nid={ids[1]}",headers=self.getheaders({'clientType':'1','id': ids[0], 'nid': ids[1]})).json()
-        vlist=[]
-        for i in pdata['data']['list']:vlist.extend([i['resolutionName'],i['url']])
-        return {'parse':0,'url':vlist,'header':self.header}
+        pdata=self.fetch(f"{self.host}/api/mw-movie/anonymous/v1/video/episode/url?id={ids[0]}&nid={ids[1]}",headers=self.getheaders({'id':ids[0],'nid':ids[1]})).json()
+        return {'parse':0,'url':pdata['data']['playUrl'],'header':self.header}
 
     def localProxy(self, param):
         pass
