@@ -1,69 +1,3 @@
-# =================== 智能万能 CDN 加速块（2025-12-08 按实测排序） ===================
-import requests, time, threading, queue
-from functools import lru_cache
-
-sess = requests.Session()
-adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=50)
-sess.mount('http://', adapter)
-sess.mount('https://', adapter)
-
-# 1. 按你最新测速结果排序（DNS 0 ms，下载均值由低到高）
-CDN_POOL = ['lib.baomitu.com', 'open.oppomobile.com']
-
-# 2. 死链替换表（保持最新可用节点）
-DEAD_MAP = {
-    'lib.baomitu.com':   CDN_POOL[0],
-    'open.oppomobile.com': CDN_POOL[0]
-}
-
-# 3. 并发测速（返回 ms，失败 9999）
-def _ping(host):
-    try:
-        t0 = time.perf_counter()
-        sess.head(f'https://{host}/favicon.ico', timeout=0.8)
-        return int((time.perf_counter() - t0) * 1000)
-    except:
-        return 9999
-
-# 4. 启动时自动排序（只跑一次）
-def _rank_cdn():
-    q = queue.Queue()
-    for h in CDN_POOL:
-        threading.Thread(target=lambda h: q.put((_ping(h), h)), args=(h,), daemon=True).start()
-    ranked = sorted([q.get() for _ in CDN_POOL])
-    return [h for _, h in ranked if _ < 9999] or CDN_POOL
-FASTEST_CDN = _rank_cdn()
-print('[CDN] 自动测速完成，最优顺序：', FASTEST_CDN)
-
-# 5. 智能选路 + 缓存（lru_cache 线程安全）
-@lru_cache(maxsize=256)
-def auto_cdn_url(url: str, follow_redirect: bool = False, proxy_base: str = None):
-    if not url:
-        return ''
-    # 5.1 先替换死链
-    for dead, fast in DEAD_MAP.items():
-        url = url.replace(dead, fast)
-    # 5.2 轮询最优 CDN
-    host = url.split('/')[2]
-    for cdn in FASTEST_CDN:
-        if cdn == host:
-            continue
-        test = url.replace(host, cdn)
-        try:
-            r = sess.head(test, allow_redirects=False, timeout=2)
-            if r.status_code == 200:
-                url = test
-                break
-        except:
-            continue
-    # 5.3 302 追踪（播放链需要）
-    if follow_redirect:
-        url = sess.get(url, stream=True, timeout=5).url
-    # 5.4 代理前缀（可选）
-    if proxy_base and not url.startswith(proxy_base):
-        url = f'{proxy_base}{requests.utils.quote(url)}'
-    return url
-# =================== 智能CDN块结束 ===================
 import json
 import random
 import re
@@ -470,3 +404,35 @@ class Spider(Spider):
         except Exception as e:
             print(f"{str(e)}")
             return pq(data.encode('utf-8'))
+   def _cover_fallback(self, pic_url):
+    """
+    极速无探测双 CDN（2025-06 白名单）
+    1. 优先lib.baomitu.com（443 ms））→  open.oppomobile.com
+    2. 主域名与原始相同则回退次速节点
+    3. 支持代理前缀（可选）
+    """
+    import urllib.parse
+    try:
+        raw = (super()._cover_fallback(pic_url) if hasattr(super(), '_cover_fallback') else pic_url) or ''
+        if not raw:
+            return ''
+    except Exception:
+        raw = pic_url or ''
+    # 白名单 CDN 按速度顺序
+    fast_pool = [
+        'lib.baomitu.com',   # 大陆 OPPO CDN
+        'open.oppomobile.com'    ]
+
+    # 默认用最快节点；若已是最快则顺次下跳
+    for cdn in fast_pool:
+        candidate = raw.replace('lib.baomitu.com', cdn).replace('open.oppomobile.com', cdn)
+        if candidate != raw:          # 替换成功即跳出
+            url = candidate
+            break
+    else:                             # 已全部是白名单，用次速回退
+        url = raw.replace('open.oppomobile.com', 'lib.baomitu.com') \
+                 .replace('lib.baomitu.com', 'open.oppomobile.com')
+    # 可选代理前缀
+    if getattr(self, 'proxy_base', None):
+        url = f'{self.proxy_base}{urllib.parse.quote(url)}'
+    return url
